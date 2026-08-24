@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  # Grand Gallery (Message Broker)
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    container_name: grand-gallery
+    command:
+      - redpanda start
+      - --smp 1
+      - --memory 512M
+      - --overprovisioned
+      - --kafka-addr PLAINTEXT://0.0.0.0:9092,OUTSIDE://0.0.0.0:9094
+      - --advertise-kafka-addr PLAINTEXT://redpanda:9092,OUTSIDE://localhost:9094
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+
+  # PostgreSQL Data Store
+  postgres:
+    image: postgres:15-alpine
+    container_name: kings-chamber-db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secretpassword
+      POSTGRES_DB: execution_engine
+    ports:
+      - "5432:5432"
+
+  # Singularity Gateway (Go Ingestion)
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    container_name: singularity-gateway
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redpanda
+
+  # Quantum EV Logic Engine (Python ML Worker)
+  engine:
+    build:
+      context: .
+      dockerfile: Dockerfile.engine
+    container_name: quantum-ev-engine
+    depends_on:
+      - redpanda
+      - postgres
+
