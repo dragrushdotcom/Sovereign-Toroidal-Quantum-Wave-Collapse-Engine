@@ -45,3 +45,4 @@ Implementing this architecture yields massive efficiency gains for AI data cente
 *   **Power/Thermal Reallocation:** Reducing the memory footprint by 1,000× (from 2 MB OS threads to 2 KB goroutines) plummets networking CPU load. Reclaimed megawatts can power 5% to 8% more GPU nodes within existing facility constraints.
 
 
+ License - Apache 2.0 License
