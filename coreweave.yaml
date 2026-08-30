@@ -1,0 +1,238 @@
+---
+# 1. Redpanda (Message Broker)
+apiVersion: v1
+kind: Service
+metadata:
+  name: redpanda
+spec:
+  ports:
+  - port: 9092
+  selector:
+    app: redpanda
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redpanda
+spec:
+  serviceName: "redpanda"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redpanda
+  template:
+    metadata:
+      labels:
+        app: redpanda
+    spec:
+      containers:
+      - name: redpanda
+        image: docker.redpanda.com/redpandadata/redpanda:latest
+        command: ["redpanda", "start", "--smp", "1", "--memory", "512M", "--overprovisioned", "--kafka-addr", "PLAINTEXT://0.0.0.0:9092", "--advertise-kafka-addr", "PLAINTEXT://redpanda:9092"]
+        ports:
+        - containerPort: 9092
+
+---
+# 2. PostgreSQL (King's Chamber DB)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  ports:
+  - port: 5432
+  selector:
+    app: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: "postgres"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        env:
+        - name: POSTGRES_USER
+          value: "admin"
+        - name: POSTGRES_PASSWORD
+          value: "secretpassword"
+        - name: POSTGRES_DB
+          value: "execution_engine"
+        ports:
+        - containerPort: 5432
+
+---
+# 3. Singularity Gateway (Go Ingestion)
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+spec:
+  type: LoadBalancer # Exposes this externally on CoreWeave
+  ports:
+  - port: 8080
+    targetPort: 8080
+  selector:
+    app: gateway
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: singularity-gateway
+spec:
+  replicas: 3 # Scaled up for CoreWeave multi-node distribution
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+      - name: gateway
+        image: golang:1.21-alpine
+        workingDir: /app
+        command: ["sh", "-c", "go mod init gateway && go get github.com/segmentio/kafka-go@v0.4.47 && go run main.go"]
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name: tiee-code-volume
+          mountPath: /app/main.go
+          subPath: main.go
+      volumes:
+      - name: tiee-code-volume
+        configMap:
+          name: tiee-code-config
+
+---
+# 4. Quantum EV Logic Engine (Python)
+apiVersion: v1
+kind: Service
+metadata:
+  name: engine
+spec:
+  ports:
+  - port: 8000
+  selector:
+    app: engine
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quantum-ev-engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: engine
+  template:
+    metadata:
+      labels:
+        app: engine
+    spec:
+      # Optional: CoreWeave GPU Node Selector (Uncomment when you integrate vLLM)
+      # nodeSelector:
+      #   gpu.coreweave.com/class: H100_SXM5
+      containers:
+      - name: engine
+        image: python:3.11-slim
+        workingDir: /app
+        env:
+        - name: KAFKA_BROKER
+          value: "redpanda:9092"
+        - name: POSTGRES_HOST
+          value: "postgres"
+        - name: POSTGRES_USER
+          value: "admin"
+        - name: POSTGRES_PASSWORD
+          value: "secretpassword"
+        - name: POSTGRES_DB
+          value: "execution_engine"
+        command: ["sh", "-c", "pip install --no-cache-dir kafka-python==2.0.2 psycopg2-binary==2.9.9 prometheus-client==0.20.0 && python -u engine.py"]
+        ports:
+        - containerPort: 8000
+        volumeMounts:
+        - name: tiee-code-volume
+          mountPath: /app/engine.py
+          subPath: engine.py
+      volumes:
+      - name: tiee-code-volume
+        configMap:
+          name: tiee-code-config
+
+---
+# 5. Observability (Prometheus & Grafana)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+      - name: prometheus
+        image: prom/prometheus:latest
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: tiee-code-volume
+          mountPath: /etc/prometheus/prometheus.yml
+          subPath: prometheus.yml
+      volumes:
+      - name: tiee-code-volume
+        configMap:
+          name: tiee-code-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+spec:
+  type: LoadBalancer # Exposes your dashboards externally
+  ports:
+  - port: 3000
+    targetPort: 3000
+  selector:
+    app: grafana
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:latest
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          value: "admin"
+        ports:
+        - containerPort: 3000
