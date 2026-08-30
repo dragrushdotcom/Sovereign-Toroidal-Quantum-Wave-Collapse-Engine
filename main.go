@@ -22,9 +22,12 @@ var kafkaWriter *kafka.Writer
 
 func init() {
 	kafkaWriter = &kafka.Writer{
-		Addr:     kafka.TCP("redpanda:9092"),
-		Topic:    "ingestion-stream",
-		Balancer: &kafka.LeastBytes{},
+		Addr:         kafka.TCP("redpanda:9092"),
+		Topic:        "ingestion-stream",
+		Balancer:     &kafka.LeastBytes{},
+		BatchSize:    100,                  // Optimized: Batch up to 100 messages
+		BatchTimeout: 5 * time.Millisecond, // Optimized: Flush every 5ms to maintain low latency
+		Async:        true,                 // Optimized: Non-blocking writes prevent FD exhaustion
 	}
 }
 
@@ -58,22 +61,27 @@ func ingestHandler(w http.ResponseWriter, r *http.Request) {
 	payload.Timestamp = time.Now().UnixNano()
 	msgBytes, _ := json.Marshal(payload)
 
-	// Async non-blocking push to Grand Gallery
-	go func(msg []byte) {
-		_ = kafkaWriter.WriteMessages(context.Background(),
-			kafka.Message{
-				Value: msg,
-			},
-		)
-	}(msgBytes)
+	// Native async push to Grand Gallery (no need for manual goroutine wrapper now)
+	err = kafkaWriter.WriteMessages(context.Background(),
+		kafka.Message{
+			Key:   []byte(payload.ID),
+			Value: msgBytes,
+		},
+	)
+
+	if err != nil {
+		log.Printf("Failed to queue message: %v", err)
+		http.Error(w, "Ingestion buffer error", http.StatusInternalServerError)
+		return
+	}
 
 	w.WriteHeader(http.StatusAccepted)
 	w.Write([]byte(`{"status":"queued"}`))
 }
 
 func main() {
+	defer kafkaWriter.Close()
 	http.HandleFunc("/ingest", ingestHandler)
 	log.Println("Singularity Gateway running on port 8080...")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
-
