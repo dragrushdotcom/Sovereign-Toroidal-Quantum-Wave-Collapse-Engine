@@ -28,12 +28,12 @@ spec:
       containers:
       - name: redpanda
         image: docker.redpanda.com/redpandadata/redpanda:latest
-        command: ["redpanda", "start", "--smp", "1", "--memory", "512M", "--overprovisioned", "--kafka-addr", "PLAINTEXT://0.0.0.0:9092", "--advertise-kafka-addr", "PLAINTEXT://redpanda:9092"]
+        command: ["redpanda", "start", "--smp", "2", "--memory", "2G", "--overprovisioned", "--kafka-addr", "PLAINTEXT://0.0.0.0:9092", "--advertise-kafka-addr", "PLAINTEXT://redpanda:9092"]
         ports:
         - containerPort: 9092
 
 ---
-# 2. PostgreSQL (King's Chamber DB) with NVMe Block Storage
+# 2. PostgreSQL DB (Region-Agnostic Block Storage)
 apiVersion: v1
 kind: Service
 metadata:
@@ -76,25 +76,24 @@ spec:
         volumeMounts:
         - name: postgres-storage
           mountPath: /var/lib/postgresql/data
-  # Requests persistent NVMe block storage from CoreWeave
   volumeClaimTemplates:
   - metadata:
       name: postgres-storage
     spec:
       accessModes: [ "ReadWriteOnce" ]
-      storageClassName: "block-nvme-ord1" 
+      storageClassName: "block-nvme" 
       resources:
         requests:
           storage: 50Gi
 
 ---
-# 3. Singularity Gateway (Go Ingestion)
+# 3. Singularity Gateway
 apiVersion: v1
 kind: Service
 metadata:
   name: gateway
 spec:
-  type: LoadBalancer # Exposes this externally on CoreWeave
+  type: LoadBalancer 
   ports:
   - port: 8080
     targetPort: 8080
@@ -106,7 +105,7 @@ kind: Deployment
 metadata:
   name: singularity-gateway
 spec:
-  replicas: 3 # Scaled up for CoreWeave multi-node distribution
+  replicas: 3 
   selector:
     matchLabels:
       app: gateway
@@ -117,22 +116,12 @@ spec:
     spec:
       containers:
       - name: gateway
-        image: golang:1.21-alpine
-        workingDir: /app
-        command: ["sh", "-c", "go mod init gateway && go get github.com/segmentio/kafka-go@v0.4.47 && go run main.go"]
+        image: <YOUR_REGISTRY>/tiee-gateway:latest # Pre-compiled
         ports:
         - containerPort: 8080
-        volumeMounts:
-        - name: tiee-code-volume
-          mountPath: /app/main.go
-          subPath: main.go
-      volumes:
-      - name: tiee-code-volume
-        configMap:
-          name: tiee-code-config
 
 ---
-# 4. Quantum EV Logic Engine (Python)
+# 4. Quantum EV Logic Engine
 apiVersion: v1
 kind: Service
 metadata:
@@ -159,8 +148,7 @@ spec:
     spec:
       containers:
       - name: engine
-        image: python:3.11-slim
-        workingDir: /app
+        image: <YOUR_REGISTRY>/tiee-engine:latest # Pre-compiled
         env:
         - name: KAFKA_BROKER
           value: "redpanda:9092"
@@ -172,20 +160,11 @@ spec:
           value: "secretpassword"
         - name: POSTGRES_DB
           value: "execution_engine"
-        command: ["sh", "-c", "pip install --no-cache-dir kafka-python==2.0.2 psycopg2-binary==2.9.9 prometheus-client==0.20.0 && python -u engine.py"]
         ports:
         - containerPort: 8000
-        volumeMounts:
-        - name: tiee-code-volume
-          mountPath: /app/engine.py
-          subPath: engine.py
-      volumes:
-      - name: tiee-code-volume
-        configMap:
-          name: tiee-code-config
 
 ---
-# 5. Observability (Prometheus & Grafana)
+# 5. Prometheus & Grafana
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -206,20 +185,20 @@ spec:
         ports:
         - containerPort: 9090
         volumeMounts:
-        - name: tiee-code-volume
+        - name: prom-config
           mountPath: /etc/prometheus/prometheus.yml
           subPath: prometheus.yml
       volumes:
-      - name: tiee-code-volume
+      - name: prom-config
         configMap:
-          name: tiee-code-config
+          name: prom-config
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: grafana
 spec:
-  type: LoadBalancer # Exposes your dashboards externally
+  type: LoadBalancer
   ports:
   - port: 3000
     targetPort: 3000
