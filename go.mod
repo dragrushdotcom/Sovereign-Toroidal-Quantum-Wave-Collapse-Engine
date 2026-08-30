@@ -1,4 +1,4 @@
-module singularity-gateway
+module github.com/dragrushdotcom/Sovereign-Toroidal-Quantum-Wave-Collapse-Engine
 
 go 1.21
 
