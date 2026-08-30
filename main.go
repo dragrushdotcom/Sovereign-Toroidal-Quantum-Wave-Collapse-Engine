@@ -59,7 +59,13 @@ func ingestHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	payload.Timestamp = time.Now().UnixNano()
-	msgBytes, _ := json.Marshal(payload)
+	
+	// FIXED: Properly handling the JSON marshal error
+	msgBytes, err := json.Marshal(payload)
+	if err != nil {
+		http.Error(w, "Serialization error", http.StatusInternalServerError)
+		return
+	}
 
 	// Native async push to Grand Gallery (no need for manual goroutine wrapper now)
 	err = kafkaWriter.WriteMessages(context.Background(),
