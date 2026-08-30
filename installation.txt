@@ -1,0 +1,64 @@
+================================================================================
+DRAGRUSH TiEE ARCHITECTURE: COREWEAVE DEPLOYMENT & TESTING GUIDE
+================================================================================
+
+This document outlines the deployment procedure for the Toroidal Information Execution Engine (TiEE) onto a CoreWeave Kubernetes cluster.
+
+PREREQUISITES
+-------------
+1. A valid CoreWeave Cloud account and downloaded `kubeconfig`.
+2. `kubectl` installed and configured to point to the CoreWeave cluster.
+3. The following files present in the local execution directory:
+   - main.go
+   - engine.py
+   - prometheus.yml
+   - coreweave.yaml
+   - load-test.js
+4. Target Region: ORD1 (to match the 'block-nvme-ord1' StorageClass in the YAML). If deploying to a different region, update the `storageClassName` in `coreweave.yaml` accordingly.
+
+STEP 1: INJECT CODE INTO CLUSTER (CONFIGMAP)
+--------------------------------------------
+Before applying the manifest, inject the application scripts directly into the Kubernetes control plane using a ConfigMap. This avoids the need for a private Docker registry.
+
+Run:
+$ kubectl create configmap tiee-code-config \
+    --from-file=main.go \
+    --from-file=engine.py \
+    --from-file=prometheus.yml
+
+STEP 2: DEPLOY THE ARCHITECTURE
+-------------------------------
+Apply the main manifest. This will spin up Redpanda, the Go Singularity Gateway (3 replicas), the Python EV Engine, PostgreSQL (with 50Gi Persistent Block NVMe), Prometheus, and Grafana.
+
+Run:
+$ kubectl apply -f coreweave.yaml
+
+Verify that all pods are running and the PVC has successfully bound:
+$ kubectl get pods
+$ kubectl get pvc postgres-storage
+
+STEP 3: RETRIEVE PUBLIC IP ADDRESSES
+------------------------------------
+CoreWeave provisions external IPs via LoadBalancer services. You will need these IPs to route the load test and access the monitoring dashboard.
+
+Run:
+$ kubectl get svc
+
+Locate the `EXTERNAL-IP` for:
+- `gateway` (Port 8080) -> Target for k6 load test.
+- `grafana` (Port 3000) -> Target for visualization (Login: admin/admin).
+
+STEP 4: EXECUTE THE LOAD SIMULATION
+-----------------------------------
+Once the cluster is healthy, execute the k6 load test against the public Gateway IP.
+
+1. Open `load-test.js`.
+2. Change `const url = 'http://localhost:8080/ingest';` to point to the Gateway's `EXTERNAL-IP` (e.g., `http://<GATEWAY-EXTERNAL-IP>:8080/ingest`).
+3. Run the test:
+$ k6 run load-test.js
+
+STEP 5: VERIFY METRICS & PERSISTENCE
+------------------------------------
+1. Log in to Grafana (`http://<GRAFANA-EXTERNAL-IP>:3000`).
+2. Add Prometheus (`http://prometheus:9090`) as a data source.
+3. Query `rate(tiee_states_collapsed_total[1m])` to confirm the Python engine is processing the asynchronous stream at high throughput.
